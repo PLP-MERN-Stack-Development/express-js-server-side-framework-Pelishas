@@ -1,71 +1,131 @@
-// server.js - Starter Express server for Week 2 assignment
-
-// Import required modules
+require('dotenv').config();
 const express = require('express');
-const bodyParser = require('body-parser');
-const { v4: uuidv4 } = require('uuid');
+const connectDB = require('./config/db');
+const Product = require('./models/Product');
+const logger = require('./middleware/logger');
+const auth = require('./middleware/auth');
+const { validateProduct } = require('./middleware/validation');
+const { errorHandler, NotFoundError } = require('./middleware/errorHandler');
 
-// Initialize Express app
 const app = express();
 const PORT = process.env.PORT || 3000;
 
-// Middleware setup
-app.use(bodyParser.json());
+connectDB();
 
-// Sample in-memory products database
-let products = [
-  {
-    id: '1',
-    name: 'Laptop',
-    description: 'High-performance laptop with 16GB RAM',
-    price: 1200,
-    category: 'electronics',
-    inStock: true
-  },
-  {
-    id: '2',
-    name: 'Smartphone',
-    description: 'Latest model with 128GB storage',
-    price: 800,
-    category: 'electronics',
-    inStock: true
-  },
-  {
-    id: '3',
-    name: 'Coffee Maker',
-    description: 'Programmable coffee maker with timer',
-    price: 50,
-    category: 'kitchen',
-    inStock: false
-  }
-];
+app.use(express.json());
+app.use(logger);
 
-// Root route
 app.get('/', (req, res) => {
   res.send('Welcome to the Product API! Go to /api/products to see all products.');
 });
 
-// TODO: Implement the following routes:
-// GET /api/products - Get all products
-// GET /api/products/:id - Get a specific product
-// POST /api/products - Create a new product
-// PUT /api/products/:id - Update a product
-// DELETE /api/products/:id - Delete a product
-
-// Example route implementation for GET /api/products
-app.get('/api/products', (req, res) => {
-  res.json(products);
+app.get('/api/products', async (req, res, next) => {
+  try {
+    const { category, page = 1, limit = 10, search } = req.query;
+    const query = {};
+    
+    if (category) query.category = category;
+    if (search) query.name = { $regex: search, $options: 'i' };
+    
+    const products = await Product.find(query)
+      .limit(limit * 1)
+      .skip((page - 1) * limit);
+    
+    const total = await Product.countDocuments(query);
+    
+    res.json({
+      products,
+      totalPages: Math.ceil(total / limit),
+      currentPage: page,
+      total
+    });
+  } catch (error) {
+    next(error);
+  }
 });
 
-// TODO: Implement custom middleware for:
-// - Request logging
-// - Authentication
-// - Error handling
+app.get('/api/products/:id', async (req, res, next) => {
+  try {
+    const product = await Product.findById(req.params.id);
+    if (!product) {
+      throw new NotFoundError('Product not found');
+    }
+    res.json(product);
+  } catch (error) {
+    next(error);
+  }
+});
 
-// Start the server
+app.post('/api/products', auth, validateProduct, async (req, res, next) => {
+  try {
+    const product = new Product(req.body);
+    await product.save();
+    res.status(201).json(product);
+  } catch (error) {
+    next(error);
+  }
+});
+
+app.put('/api/products/:id', auth, validateProduct, async (req, res, next) => {
+  try {
+    const product = await Product.findByIdAndUpdate(
+      req.params.id,
+      req.body,
+      { new: true, runValidators: true }
+    );
+    if (!product) {
+      throw new NotFoundError('Product not found');
+    }
+    res.json(product);
+  } catch (error) {
+    next(error);
+  }
+});
+
+app.delete('/api/products/:id', auth, async (req, res, next) => {
+  try {
+    const product = await Product.findByIdAndDelete(req.params.id);
+    if (!product) {
+      throw new NotFoundError('Product not found');
+    }
+    res.json({ message: 'Product deleted successfully' });
+  } catch (error) {
+    next(error);
+  }
+});
+
+app.get('/api/products/search/:name', async (req, res, next) => {
+  try {
+    const products = await Product.find({
+      name: { $regex: req.params.name, $options: 'i' }
+    });
+    res.json(products);
+  } catch (error) {
+    next(error);
+  }
+});
+
+app.get('/api/stats', async (req, res, next) => {
+  try {
+    const stats = await Product.aggregate([
+      {
+        $group: {
+          _id: '$category',
+          count: { $sum: 1 },
+          avgPrice: { $avg: '$price' }
+        }
+      }
+    ]);
+    res.json(stats);
+  } catch (error) {
+    next(error);
+  }
+});
+
+app.use(errorHandler);
+
 app.listen(PORT, () => {
   console.log(`Server is running on http://localhost:${PORT}`);
 });
 
-// Export the app for testing purposes
 module.exports = app; 
