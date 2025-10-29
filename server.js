@@ -19,7 +19,7 @@ app.get('/', (req, res) => {
   res.send('Welcome to the Product API! Go to /api/products to see all products.');
 });
 
-app.get('/api/products', async (req, res, next) => {
+app.get('/products', async (req, res, next) => {
   try {
     const { category, page = 1, limit = 10, search } = req.query;
     const query = {};
